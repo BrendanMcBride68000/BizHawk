@@ -111,7 +111,7 @@ int audio_init(int samplerate, double framerate)
   blip_set_rates(snd.blips[0][1], mclk, samplerate);
 
   /* Initialize PSG core */
-  SN76489_Init(snd.blips[0][0], snd.blips[0][1], (system_hw < SYSTEM_MARKIII) ? SN_DISCRETE : SN_INTEGRATED);
+  psg_Init(snd.blips[0][0], snd.blips[0][1], (system_hw < SYSTEM_MARKIII) ? SN_DISCRETE : SN_INTEGRATED);
 
   /* Mega CD sound hardware */
   if (system_hw == SYSTEM_MCD)

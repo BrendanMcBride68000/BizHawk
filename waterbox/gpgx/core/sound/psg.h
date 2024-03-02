@@ -1,9 +1,12 @@
 /***************************************************************************************
  *  Genesis Plus
- *  Sound Hardware
+ *  PSG sound chip (SN76489A compatible)
  *
- *  Copyright (C) 1998-2003  Charles Mac Donald (original code)
- *  Copyright (C) 2007-2020  Eke-Eke (Genesis Plus GX)
+ *  Support for discrete chip & integrated (ASIC) clones
+ *
+ *  Noise implementation based on http://www.smspower.org/Development/SN76489#NoiseChannel
+ *
+ *  Copyright (C) 2016-2017 Eke-Eke (Genesis Plus GX)
  *
  *  Redistribution and use of this code or any derivative works are permitted
  *  provided that the following conditions are met:
@@ -37,17 +40,21 @@
  *
  ****************************************************************************************/
 
-#ifndef _SOUND_H_
-#define _SOUND_H_
+#ifndef _PSG_H_
+#define _PSG_H_
+
+typedef enum {
+  PSG_DISCRETE,
+  PSG_INTEGRATED
+} PSG_TYPE;
 
 /* Function prototypes */
-extern void sound_init(void);
-extern void sound_reset(void);
-extern int sound_context_save(uint8 *state);
-extern int sound_context_load(uint8 *state);
-extern int sound_update(unsigned int cycles);
-extern void (*fm_reset)(unsigned int cycles);
-extern void (*fm_write)(unsigned int cycles, unsigned int address, unsigned int data);
-extern unsigned int (*fm_read)(unsigned int cycles, unsigned int address);
+extern void psg_init(PSG_TYPE type);
+extern void psg_reset(void);
+extern int psg_context_save(uint8 *state);
+extern int psg_context_load(uint8 *state);
+extern void psg_write(unsigned int clocks, unsigned int data);
+extern void psg_config(unsigned int clocks, unsigned int preamp, unsigned int panning);
+extern void psg_end_frame(unsigned int clocks);
 
-#endif /* _SOUND_H_ */
+#endif /* _PSG_H_ */
