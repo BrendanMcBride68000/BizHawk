@@ -37,6 +37,7 @@
  ****************************************************************************************/
 
 #include "shared.h"
+#include "eeprom_spi.h"
 
 /* max supported size 64KB (25x512/95x512) */
 #define SIZE_MASK 0xffff
@@ -48,31 +49,9 @@
 #define BIT_HOLD (2)
 #define BIT_CS   (3)
 
-typedef enum
-{
-  STANDBY,
-  GET_OPCODE,
-  GET_ADDRESS,
-  WRITE_BYTE,
-  READ_BYTE
-} T_STATE_SPI;
+T_EEPROM_SPI spi_eeprom;
 
-typedef struct
-{
-  uint8 cs;           /* !CS line state */
-  uint8 clk;          /* SCLK line state */
-  uint8 out;          /* SO line state */
-  uint8 status;       /* status register */
-  uint8 opcode;       /* 8-bit opcode */
-  uint8 buffer;       /* 8-bit data buffer */
-  uint16 addr;        /* 16-bit address */
-  uint32 cycles;      /* current operation cycle */
-  T_STATE_SPI state;  /* current operation state */
-} T_EEPROM_SPI;
-
-static T_EEPROM_SPI spi_eeprom;
-
-void eeprom_spi_init(void)
+void eeprom_spi_init()
 {
   /* reset eeprom state */
   memset(&spi_eeprom, 0, sizeof(T_EEPROM_SPI));

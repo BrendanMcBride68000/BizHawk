@@ -2,7 +2,7 @@
  *  Genesis Plus
  *  PCM sound chip (315-5476A) (RF5C164 compatible)
  *
- *  Copyright (C) 2012-2023  Eke-Eke (Genesis Plus GX)
+ *  Copyright (C) 2012  Eke-Eke (Genesis Plus GX)
  *
  *  Redistribution and use of this code or any derivative works are permitted
  *  provided that the following conditions are met:
@@ -41,11 +41,19 @@
 
 #define pcm scd.pcm_hw
 
-void pcm_init(double clock, int samplerate)
+static blip_t* blip[2];
+
+void pcm_init(blip_t* left, blip_t* right)
 {
-  /* PCM chip is running at original rate and is synchronized with SUB-CPU  */
+  /* number of SCD master clocks run per second */
+  double mclk = snd.frame_rate ? (SCYCLES_PER_LINE * (vdp_pal ? 313 : 262) * snd.frame_rate) : SCD_CLOCK;
+
+  /* PCM chips is running at original rate and is synchronized with SUB-CPU  */
   /* Chip output is resampled to desired rate using Blip Buffer. */
-  blip_set_rates(snd.blips[1], clock / PCM_SCYCLES_RATIO, samplerate);
+  blip[0] = left;
+  blip[1] = right;
+  blip_set_rates(left, mclk / PCM_SCYCLES_RATIO, snd.sample_rate);
+  blip_set_rates(right, mclk / PCM_SCYCLES_RATIO, snd.sample_rate);
 }
 
 void pcm_reset(void)
@@ -70,61 +78,21 @@ void pcm_reset(void)
   pcm.cycles = 0;
 
   /* clear blip buffers */
-  blip_clear(snd.blips[1]);
+  blip_clear(blip[0]);
+  blip_clear(blip[1]);
 }
 
-int pcm_context_save(uint8 *state)
-{
-  uint8 tmp8;
-  int bufferptr = 0;
-
-  tmp8 = (pcm.bank - pcm.ram) >> 12;
-
-  save_param(pcm.chan, sizeof(pcm.chan));
-  save_param(pcm.out, sizeof(pcm.out));
-  save_param(&tmp8, 1);
-  save_param(&pcm.enabled, sizeof(pcm.enabled));
-  save_param(&pcm.status, sizeof(pcm.status));
-  save_param(&pcm.index, sizeof(pcm.index));
-  save_param(pcm.ram, sizeof(pcm.ram));
-
-  return bufferptr;
-}
-
-int pcm_context_load(uint8 *state)
-{
-  uint8 tmp8;
-  int bufferptr = 0;
-
-  load_param(pcm.chan, sizeof(pcm.chan));
-  load_param(pcm.out, sizeof(pcm.out));
-
-  load_param(&tmp8, 1);
-  pcm.bank = &pcm.ram[(tmp8 & 0x0f) << 12];
-
-  load_param(&pcm.enabled, sizeof(pcm.enabled));
-  load_param(&pcm.status, sizeof(pcm.status));
-  load_param(&pcm.index, sizeof(pcm.index));
-  load_param(pcm.ram, sizeof(pcm.ram));
-
-  return bufferptr;
-}
 
 void pcm_run(unsigned int length)
 {
 #ifdef LOG_PCM
   error("[%d][%d]run %d PCM samples (from %d)\n", v_counter, s68k.cycles, length, pcm.cycles);
 #endif
-
-  /* previous audio outputs */
-  int prev_l = pcm.out[0];
-  int prev_r = pcm.out[1];
-
   /* check if PCM chip is running */
   if (pcm.enabled)
   {
     int i, j, l, r;
-  
+
     /* generate PCM samples */
     for (i=0; i<length; i++)
     {
@@ -183,33 +151,41 @@ void pcm_run(unsigned int length)
       if (r < -32768) r = -32768;
       else if (r > 32767) r = 32767;
 
-      /* PCM output mixing level (0-100%) */
-      l = (l * config.pcm_volume) / 100;
-      r = (r * config.pcm_volume) / 100;
+      /* check if PCM left output changed */
+      if (pcm.out[0] != l)
+      {
+        blip_add_delta_fast(blip[0], i, l-pcm.out[0]);
+        pcm.out[0] = l;
+      }
 
-      /* update blip buffer */
-      blip_add_delta_fast(snd.blips[1], i, l-prev_l, r-prev_r);
-      prev_l = l;
-      prev_r = r;
+      /* check if PCM right output changed */
+      if (pcm.out[1] != r)
+      {
+        blip_add_delta_fast(blip[1], i, r-pcm.out[1]);
+        pcm.out[1] = r;
+      }
     }
-
-    /* save last audio outputs */
-    pcm.out[0] = prev_l;
-    pcm.out[1] = prev_r;
   }
   else
   {
-    /* check if PCM output was not muted */
-    if (prev_l | prev_r)
+    /* check if PCM left output changed */
+    if (pcm.out[0])
     {
-      blip_add_delta_fast(snd.blips[1], 0, -prev_l, -prev_r);
+      blip_add_delta_fast(blip[0], 0, -pcm.out[0]);
       pcm.out[0] = 0;
+    }
+
+    /* check if PCM right output changed */
+    if (pcm.out[1])
+    {
+      blip_add_delta_fast(blip[1], 0, -pcm.out[1]);
       pcm.out[1] = 0;
     }
   }
 
   /* end of blip buffer frame */
-  blip_end_frame(snd.blips[1], length);
+  blip_end_frame(blip[0], length);
+  blip_end_frame(blip[1], length);
 
   /* update PCM master clock counter */
   pcm.cycles += length * PCM_SCYCLES_RATIO;
@@ -218,7 +194,7 @@ void pcm_run(unsigned int length)
 void pcm_update(unsigned int samples)
 {
   /* get number of internal clocks (samples) needed */
-  unsigned int clocks = blip_clocks_needed(snd.blips[1], samples);
+  unsigned int clocks = blip_clocks_needed(blip[0], samples);
 
   /* run PCM chip */
   if (clocks > 0)
@@ -230,10 +206,10 @@ void pcm_update(unsigned int samples)
   pcm.cycles = 0;
 }
 
-void pcm_write(unsigned int address, unsigned char data, unsigned int cycles)
+void pcm_write(unsigned int address, unsigned char data)
 {
-  /* synchronize PCM chip with CPU */
-  int clocks = cycles - pcm.cycles;
+  /* synchronize PCM chip with SUB-CPU */
+  int clocks = s68k.cycles - pcm.cycles;
   if (clocks > 0)
   {
     /* number of internal clocks (samples) to run */
@@ -354,10 +330,10 @@ void pcm_write(unsigned int address, unsigned char data, unsigned int cycles)
   }
 }
 
-unsigned char pcm_read(unsigned int address, unsigned int cycles)
+unsigned char pcm_read(unsigned int address)
 {
   /* synchronize PCM chip with SUB-CPU */
-  int clocks = cycles - pcm.cycles;
+  int clocks = s68k.cycles - pcm.cycles;
   if (clocks > 0)
   {
     /* number of internal clocks (samples) to run */
@@ -395,31 +371,36 @@ unsigned char pcm_read(unsigned int address, unsigned int cycles)
   return 0xff;
 }
 
-void pcm_ram_dma_w(unsigned int length)
+void pcm_ram_dma_w(unsigned int words)
 {
+  uint16 data;
+
   /* CDC buffer source address */
-  uint16 src_index = cdc.dac.w & 0x3fff;
-  
+  uint16 src_index = cdc.dac.w & 0x3ffe;
+
   /* PCM-RAM destination address*/
-  uint16 dst_index = (scd.regs[0x0a>>1].w << 2) & 0xfff;
-  
+  uint16 dst_index = (scd.regs[0x0a>>1].w << 2) & 0xffe;
+
   /* update DMA destination address */
-  scd.regs[0x0a>>1].w += (length >> 2);
+  scd.regs[0x0a>>1].w += (words >> 1);
 
   /* update DMA source address */
-  cdc.dac.w += length;
+  cdc.dac.w += (words << 1);
 
   /* DMA transfer */
-  while (length--)
+  while (words--)
   {
-    /* copy byte from CDC buffer to PCM RAM bank */
-    pcm.bank[dst_index] = cdc.ram[src_index];
+    /* read 16-bit word from CDC buffer */
+    data = *(uint16 *)(cdc.ram + src_index);
+
+    /* write 16-bit word to PCM RAM (endianness does not matter since PCM RAM is always accessed as byte)*/
+    *(uint16 *)(pcm.bank + dst_index) = data ;
 
     /* increment CDC buffer source address */
-    src_index = (src_index + 1) & 0x3fff;
+    src_index = (src_index + 2) & 0x3ffe;
 
     /* increment PCM-RAM destination address */
-    dst_index = (dst_index + 1) & 0xfff;
+    dst_index = (dst_index + 2) & 0xffe;
   }
 }
 

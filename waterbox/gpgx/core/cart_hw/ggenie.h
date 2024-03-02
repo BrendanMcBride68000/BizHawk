@@ -1,8 +1,8 @@
 /****************************************************************************
  *  Genesis Plus
- *  Game Genie hardware support
+ *  Game Genie Hardware emulation
  *
- *  Copyright (C) 2009-2021  Eke-Eke (Genesis Plus GX)
+ *  Copyright (C) 2009-2011  Eke-Eke (Genesis Plus GX)
  *
  *  Based on documentation from Charles McDonald
  *  (http://cgfm2.emuviews.com/txt/genie.txt)

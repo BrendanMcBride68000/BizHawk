@@ -2,7 +2,7 @@
  *  Genesis Plus
  *  CD graphics processor
  *
- *  Copyright (C) 2012-2024  Eke-Eke (Genesis Plus GX)
+ *  Copyright (C) 2012  Eke-Eke (Genesis Plus GX)
  *
  *  Redistribution and use of this code or any derivative works are permitted
  *  provided that the following conditions are met:
@@ -61,9 +61,9 @@ typedef struct
 /***************************************************************/
 /*          WORD-RAM DMA interfaces (1M & 2M modes)            */
 /***************************************************************/
-extern void word_ram_0_dma_w(unsigned int length);
-extern void word_ram_1_dma_w(unsigned int length);
-extern void word_ram_2M_dma_w(unsigned int length);
+extern void word_ram_0_dma_w(unsigned int words);
+extern void word_ram_1_dma_w(unsigned int words);
+extern void word_ram_2M_dma_w(unsigned int words);
 
 /***************************************************************/
 /*          WORD-RAM 0 & 1 CPU interfaces (1M mode)            */
@@ -108,8 +108,7 @@ extern void cell_ram_1_write8(unsigned int address, unsigned int data);
 /***************************************************************/
 extern void gfx_init(void);
 extern void gfx_reset(void);
-extern int gfx_context_save(uint8 *state);
-extern int gfx_context_load(uint8 *state);
+
 extern void gfx_start(unsigned int base, int cycles);
 extern void gfx_update(int cycles);
 

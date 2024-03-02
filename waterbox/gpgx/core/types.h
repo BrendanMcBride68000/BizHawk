@@ -1,6 +1,5 @@
-
-#ifndef _TYPES_H_
-#define _TYPES_H_
+#ifndef _TYPES_H
+#define _TYPES_H
 
 #undef uint8
 #undef uint16
@@ -32,4 +31,4 @@ typedef union
 
 } reg16_t;
 
-#endif /* _TYPES_H_ */
+#endif

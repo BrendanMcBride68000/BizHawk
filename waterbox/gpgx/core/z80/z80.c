@@ -38,7 +38,6 @@
  *    - Implemented cycle-accurate INI/IND (needed by SMS emulation)
  *    - Fixed Z80 reset
  *    - Made SZHVC_add & SZHVC_sub tables statically allocated
- *    - Fixed compiler warning when BIG_SWITCH is defined
  *   Changes in 3.9:
  *    - Fixed cycle counts for LD IYL/IXL/IYH/IXH,n [Marshmellow]
  *    - Fixed X/Y flags in CCF/SCF/BIT, ZEXALL is happy now [hap]
@@ -127,6 +126,8 @@
 #include "shared.h"
 #include "z80.h"
 
+#include "../cinterface/callbacks.h"
+
 /* execute main opcodes inside a big switch statement */
 #define BIG_SWITCH 1
 
@@ -202,15 +203,7 @@
 #define IFF2 Z80.iff2
 #define HALT Z80.halt
 
-#ifdef Z80_OVERCLOCK_SHIFT
-#define USE_CYCLES(A) Z80.cycles += ((A) * z80_cycle_ratio) >> Z80_OVERCLOCK_SHIFT
-UINT32 z80_cycle_ratio;
-#else
-#define USE_CYCLES(A) Z80.cycles += (A)
-#endif
-
 Z80_Regs Z80;
-UINT8 z80_last_fetch;
 
 unsigned char *z80_readmap[64];
 unsigned char *z80_writemap[64];
@@ -228,8 +221,8 @@ static UINT8 SZP[256];      /* zero, sign and parity flags */
 static UINT8 SZHV_inc[256]; /* zero, sign, half carry and overflow flags INC r8 */
 static UINT8 SZHV_dec[256]; /* zero, sign, half carry and overflow flags DEC r8 */
 
-static UINT8 SZHVC_add[2*256*256]; /* flags for ADD opcode */
-static UINT8 SZHVC_sub[2*256*256]; /* flags for SUB opcode */
+UINT8 *SZHVC_add; /* flags for ADD opcode */
+UINT8 *SZHVC_sub; /* flags for SUB opcode */
 
 static const UINT16 cc_op[0x100] = {
    4*15,10*15, 7*15, 6*15, 4*15, 4*15, 7*15, 4*15, 4*15,11*15, 7*15, 6*15, 4*15, 4*15, 7*15, 4*15,
@@ -430,9 +423,7 @@ typedef void (*funcptr)(void);
   INLINE void prefix##_f0(void); INLINE void prefix##_f1(void); INLINE void prefix##_f2(void); INLINE void prefix##_f3(void); \
   INLINE void prefix##_f4(void); INLINE void prefix##_f5(void); INLINE void prefix##_f6(void); INLINE void prefix##_f7(void); \
   INLINE void prefix##_f8(void); INLINE void prefix##_f9(void); INLINE void prefix##_fa(void); INLINE void prefix##_fb(void); \
-  INLINE void prefix##_fc(void); INLINE void prefix##_fd(void); INLINE void prefix##_fe(void); INLINE void prefix##_ff(void);
-
-#define FUNCTABLE(tablename,prefix) \
+  INLINE void prefix##_fc(void); INLINE void prefix##_fd(void); INLINE void prefix##_fe(void); INLINE void prefix##_ff(void); \
 static const funcptr tablename[0x100] = {  \
   prefix##_00,prefix##_01,prefix##_02,prefix##_03,prefix##_04,prefix##_05,prefix##_06,prefix##_07, \
   prefix##_08,prefix##_09,prefix##_0a,prefix##_0b,prefix##_0c,prefix##_0d,prefix##_0e,prefix##_0f, \
@@ -468,21 +459,12 @@ static const funcptr tablename[0x100] = {  \
   prefix##_f8,prefix##_f9,prefix##_fa,prefix##_fb,prefix##_fc,prefix##_fd,prefix##_fe,prefix##_ff  \
 }
 
-PROTOTYPES(Z80op,op)
-PROTOTYPES(Z80cb,cb)
-PROTOTYPES(Z80dd,dd)
-PROTOTYPES(Z80ed,ed)
-PROTOTYPES(Z80fd,fd)
-PROTOTYPES(Z80xycb,xycb)
-
-#ifndef BIG_SWITCH
-FUNCTABLE(Z80op,op);
-#endif
-FUNCTABLE(Z80cb,cb);
-FUNCTABLE(Z80dd,dd);
-FUNCTABLE(Z80ed,ed);
-FUNCTABLE(Z80fd,fd);
-FUNCTABLE(Z80xycb,xycb);
+PROTOTYPES(Z80op,op);
+PROTOTYPES(Z80cb,cb);
+PROTOTYPES(Z80dd,dd);
+PROTOTYPES(Z80ed,ed);
+PROTOTYPES(Z80fd,fd);
+PROTOTYPES(Z80xycb,xycb);
 
 /****************************************************************************/
 /* Burn an odd amount of cycles, that is instructions taking something    */
@@ -493,7 +475,7 @@ INLINE void BURNODD(int cycles, int opcodes, int cyclesum)
   if( cycles > 0 )
   {
     R += (cycles / cyclesum) * opcodes;
-    USE_CYCLES((cycles / cyclesum) * cyclesum * 15);
+    Z80.cycles += (cycles / cyclesum) * cyclesum * 15;
   }
 }
 
@@ -505,7 +487,7 @@ INLINE void BURNODD(int cycles, int opcodes, int cyclesum)
 /***************************************************************
  * adjust cycle count by n T-states
  ***************************************************************/
-#define CC(prefix,opcode) USE_CYCLES(cc[Z80_TABLE_##prefix][opcode])
+#define CC(prefix,opcode) Z80.cycles += cc[Z80_TABLE_##prefix][opcode]
 
 /***************************************************************
  * execute an opcode
@@ -595,6 +577,43 @@ INLINE void BURNODD(int cycles, int opcodes, int cyclesum)
 #endif
 
 
+void CDLog68k(uint addr, uint flags);
+
+void CDLogZ80(uint addr, uint flags)
+{
+	//in case we wrap around while reading a u16 from FFFF...
+	addr &= 0xFFFF;
+
+	if(addr < 0x4000)
+	{
+		addr &= 0x1FFF;
+		biz_cdcallback(addr, eCDLog_AddrType_RAMZ80, flags);
+		return;
+	}
+
+	if(addr >= 0x8000)
+	{
+    addr = zbank | (addr & 0x7FFF);
+    if (zbank_memory_map[addr >> 16].read)
+    {
+			//special memory maps are hard to support here.
+			//hopefully, most carts aren't setting this CB for simple accesses to ROMs 
+      return;
+    }
+
+		//punt to 68k mapper
+		CDLog68k(addr, flags);
+    return;
+	}
+}
+
+INLINE unsigned char CDLogZ80_RM(uint addr)
+{
+	if(biz_cdcallback)
+		CDLogZ80(addr,eCDLog_Flags_DataZ80);
+	return z80_readmem(addr);
+}
+
 /***************************************************************
  * Enter HALT state; write 1 to fake port on first execution
  ***************************************************************/
@@ -627,7 +646,7 @@ INLINE void BURNODD(int cycles, int opcodes, int cyclesum)
 /***************************************************************
  * Read a byte from given memory location
  ***************************************************************/
-#define RM(addr) z80_readmem(addr)
+#define RM(addr) CDLogZ80_RM(addr)
 
 /***************************************************************
  * Write a byte to given memory location
@@ -661,8 +680,11 @@ INLINE UINT8 ROP(void)
 {
   unsigned pc = PCD;
   PC++;
-  z80_last_fetch = cpu_readop(pc);
-  return z80_last_fetch;
+
+	if(biz_cdcallback)
+		CDLogZ80(PC,eCDLog_Flags_ExecZ80First);
+
+  return cpu_readop(pc);
 }
 
 /****************************************************************
@@ -675,6 +697,10 @@ INLINE UINT8 ARG(void)
 {
   unsigned pc = PCD;
   PC++;
+
+	if(biz_cdcallback)
+		CDLogZ80(pc,eCDLog_Flags_ExecZ80Operand);
+
   return cpu_readop_arg(pc);
 }
 
@@ -682,6 +708,13 @@ INLINE UINT32 ARG16(void)
 {
   unsigned pc = PCD;
   PC += 2;
+
+	if(biz_cdcallback)
+	{
+		CDLogZ80(pc,eCDLog_Flags_ExecZ80Operand);
+		CDLogZ80(pc+1,eCDLog_Flags_ExecZ80Operand);
+	}
+
   return cpu_readop_arg(pc) | (cpu_readop_arg((pc+1)&0xffff) << 8);
 }
 
@@ -3249,7 +3282,7 @@ static void take_interrupt(void)
     PUSH( pc );
     PCD = 0x0038;
     /* RST $38 + 'interrupt latency' cycles */
-    USE_CYCLES(cc[Z80_TABLE_op][0xff] + cc[Z80_TABLE_ex][0xff]);
+    Z80.cycles += cc[Z80_TABLE_op][0xff] + cc[Z80_TABLE_ex][0xff];
   }
   else
   {
@@ -3264,7 +3297,7 @@ static void take_interrupt(void)
       RM16( irq_vector, &Z80.pc );
       LOG(("Z80 #%d IM2 [$%04x] = $%04x\n",cpu_getactivecpu() , irq_vector, PCD));
         /* CALL $xxxx + 'interrupt latency' cycles */
-      USE_CYCLES(cc[Z80_TABLE_op][0xcd] + cc[Z80_TABLE_ex][0xff]);
+      Z80.cycles += cc[Z80_TABLE_op][0xcd] + cc[Z80_TABLE_ex][0xff];
     }
     else
     {
@@ -3278,18 +3311,18 @@ static void take_interrupt(void)
         PUSH( pc );
         PCD = irq_vector & 0xffff;
            /* CALL $xxxx + 'interrupt latency' cycles */
-        USE_CYCLES(cc[Z80_TABLE_op][0xcd] + cc[Z80_TABLE_ex][0xff]);
+        Z80.cycles += cc[Z80_TABLE_op][0xcd] + cc[Z80_TABLE_ex][0xff];
           break;
         case 0xc30000:  /* jump */
         PCD = irq_vector & 0xffff;
           /* JP $xxxx + 2 cycles */
-        USE_CYCLES(cc[Z80_TABLE_op][0xc3] + cc[Z80_TABLE_ex][0xff]);
+        Z80.cycles += cc[Z80_TABLE_op][0xc3] + cc[Z80_TABLE_ex][0xff];
           break;
         default:    /* rst (or other opcodes?) */
         PUSH( pc );
         PCD = irq_vector & 0x0038;
           /* RST $xx + 2 cycles */
-        USE_CYCLES(cc[Z80_TABLE_op][0xff] + cc[Z80_TABLE_ex][0xff]);
+        Z80.cycles += cc[Z80_TABLE_op][0xff] + cc[Z80_TABLE_ex][0xff];
           break;
       }
     }
@@ -3379,9 +3412,6 @@ void z80_init(const void *config, int (*irqcallback)(int))
   memset(&Z80, 0, sizeof(Z80));
   Z80.daisy = config;
   Z80.irq_callback = irqcallback;
-#ifdef Z80_OVERCLOCK_SHIFT
-  z80_cycle_ratio = 1 << Z80_OVERCLOCK_SHIFT;
-#endif
 
   /* Clear registers values (NB: should be random on real hardware ?) */
   AF = BC = DE = HL = SP = IX = IY =0;
@@ -3415,7 +3445,7 @@ void z80_reset(void)
 }
 
 /****************************************************************************
- * Run until given cycle count 
+ * Run until given cycle count
  ****************************************************************************/
 void z80_run(unsigned int cycles)
 {
@@ -3432,7 +3462,7 @@ void z80_run(unsigned int cycles)
     R++;
     EXEC_INLINE(op,ROP());
   }
-} 
+}
 
 /****************************************************************************
  * Get all registers in given buffer
@@ -3473,7 +3503,7 @@ void z80_set_nmi_line(unsigned int state)
     PCD = 0x0066;
     WZ=PCD;
 
-    USE_CYCLES(11*15);
+    Z80.cycles += 11*15;
   }
 
   Z80.nmi_state = state;

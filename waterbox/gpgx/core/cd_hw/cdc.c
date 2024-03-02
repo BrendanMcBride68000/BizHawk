@@ -1,8 +1,8 @@
 /***************************************************************************************
  *  Genesis Plus
- *  CD data controller (LC8951x compatible)
+ *  CD data controller (LC89510 compatible)
  *
- *  Copyright (C) 2012-2024  Eke-Eke (Genesis Plus GX)
+ *  Copyright (C) 2012  Eke-Eke (Genesis Plus GX)
  *
  *  Redistribution and use of this code or any derivative works are permitted
  *  provided that the following conditions are met:
@@ -51,6 +51,7 @@
 
 /* CTRL0 register bitmasks */
 #define BIT_DECEN   0x80
+#define BIT_E01RQ   0x20
 #define BIT_AUTORQ  0x10
 #define BIT_WRRQ    0x04
 
@@ -59,30 +60,15 @@
 #define BIT_FORMRQ  0x04
 #define BIT_SHDREN  0x01
 
-/* STAT3 register bitmask */
+/* CTRL2 register bitmask */
 #define BIT_VALST   0x80
 
-/* DMA transfer rate */
-/* min. 4 x SUB-CPU cycles (i.e 16 x SCD cycles) per byte (cf https://github.com/MiSTer-devel/MegaCD_MiSTer/tree/master/docs/mcd%20logs) */
-/* additional delays caused by SUB-CPU access & periodic refresh (all RAM), GPU operation (Word-RAM only) or PCM playback (PCM RAM only) */
-/* are not emulated */
-#define DMA_CYCLES_PER_BYTE 16
+/* TODO: figure exact DMA transfer rate */
+#define DMA_BYTES_PER_LINE 512
 
 void cdc_init(void)
 {
   memset(&cdc, 0, sizeof(cdc_t));
-
-  /* autodetect CDC configuration */
-  if ((scd.type == CD_TYPE_WONDERMEGA_M2) || (scd.type == CD_TYPE_CDX))
-  {
-    /* LC89513K chip (Wondermega M2 / X'Eye / CDX / Multi-Mega) */
-    cdc.ar_mask = 0x1f;
-  }
-  else 
-  {
-    /* LC8951 or LC89515 chip (default)*/
-    cdc.ar_mask = 0x0f;
-  }
 }
 
 void cdc_reset(void)
@@ -108,14 +94,11 @@ void cdc_reset(void)
   cdc.head[1][2] = 0x00;
   cdc.head[1][3] = 0x00;
 
-  /* reset CDC DMA & decoder cycle counters */
-  cdc.cycles[0] = cdc.cycles[1] = 0;
+  /* reset CDC cycle counter */
+  cdc.cycles = 0;
 
-  /* disable CDC DMA */
-  cdc.dma_w = cdc.halted_dma_w = 0;
-
-  /* reset CDC IRQ state */
-  cdc.irq = 0;
+  /* DMA transfer disabled */
+  cdc.dma_w = 0;
 
   /* clear any pending IRQ */
   if (scd.pending & (1 << 5))
@@ -128,282 +111,19 @@ void cdc_reset(void)
   }
 }
 
-int cdc_context_save(uint8 *state)
+void cdc_dma_update(void)
 {
-  uint8 tmp8;
-  int bufferptr = 0;
-
-  if (cdc.dma_w == pcm_ram_dma_w)
-  {
-    tmp8 = 1;
-  }
-  else if (cdc.dma_w == prg_ram_dma_w)
-  {
-    tmp8 = 2;
-  }
-  else if (cdc.dma_w == word_ram_0_dma_w)
-  {
-    tmp8 = 3;
-  }
-  else if (cdc.dma_w == word_ram_1_dma_w)
-  {
-    tmp8 = 4;
-  }
-  else if (cdc.dma_w == word_ram_2M_dma_w)
-  {
-    tmp8 = 5;
-  }
-  else if (cdc.halted_dma_w == prg_ram_dma_w)
-  {
-    tmp8 = 6;
-  }
-  else if (cdc.halted_dma_w == word_ram_2M_dma_w)
-  {
-    tmp8 = 7;
-  }
-  else
-  {
-    tmp8 = 0;
-  }
-
-  save_param(&cdc.ifstat, sizeof(cdc.ifstat));
-  save_param(&cdc.ifctrl, sizeof(cdc.ifctrl));
-  save_param(&cdc.dbc, sizeof(cdc.dbc));
-  save_param(&cdc.dac, sizeof(cdc.dac));
-  save_param(&cdc.pt, sizeof(cdc.pt));
-  save_param(&cdc.wa, sizeof(cdc.wa));
-  save_param(&cdc.ctrl, sizeof(cdc.ctrl));
-  save_param(&cdc.head, sizeof(cdc.head));
-  save_param(&cdc.stat, sizeof(cdc.stat));
-  save_param(&cdc.cycles, sizeof(cdc.cycles));
-  save_param(&cdc.ram, sizeof(cdc.ram));
-  save_param(&tmp8, 1);
-
-  return bufferptr;
-}
-
-int cdc_context_load(uint8 *state)
-{
-  uint8 tmp8;
-  int bufferptr = 0;
-
-  load_param(&cdc.ifstat, sizeof(cdc.ifstat));
-  load_param(&cdc.ifctrl, sizeof(cdc.ifctrl));
-  load_param(&cdc.dbc, sizeof(cdc.dbc));
-  load_param(&cdc.dac, sizeof(cdc.dac));
-  load_param(&cdc.pt, sizeof(cdc.pt));
-  load_param(&cdc.wa, sizeof(cdc.wa));
-  load_param(&cdc.ctrl, sizeof(cdc.ctrl));
-  load_param(&cdc.head, sizeof(cdc.head));
-  load_param(&cdc.stat, sizeof(cdc.stat));
-  load_param(&cdc.cycles, sizeof(cdc.cycles));
-  load_param(&cdc.ram, sizeof(cdc.ram));
-
-  load_param(&tmp8, 1);
-
-  switch (tmp8)
-  {
-    case 1:
-      cdc.dma_w = pcm_ram_dma_w;
-      cdc.halted_dma_w = 0;
-      break;
-    case 2:
-      cdc.dma_w = prg_ram_dma_w;
-      cdc.halted_dma_w = 0;
-      break;
-    case 3:
-      cdc.dma_w = word_ram_0_dma_w;
-      cdc.halted_dma_w = 0;
-      break;
-    case 4:
-      cdc.dma_w = word_ram_1_dma_w;
-      cdc.halted_dma_w = 0;
-      break;
-    case 5:
-      cdc.dma_w = word_ram_2M_dma_w;
-      cdc.halted_dma_w = 0;
-      break;
-    case 6:
-      cdc.dma_w = 0;
-      cdc.halted_dma_w = prg_ram_dma_w;
-      break;
-    case 7:
-      cdc.dma_w = 0;
-      cdc.halted_dma_w = word_ram_2M_dma_w;
-      break;
-    default:
-      cdc.dma_w = 0;
-      cdc.halted_dma_w = 0;
-      break;
-  }
-
-  cdc.irq = ~cdc.ifstat & cdc.ifctrl & (BIT_DTEIEN | BIT_DECIEN);
-
-  return bufferptr;
-}
-
-void cdc_dma_init(void)
-{
-  /* no effect if data transfer is not started */
-  if (cdc.ifstat & BIT_DTEN)
-    return;
-  
-  /* disable DMA by default */
-  cdc.dma_w = cdc.halted_dma_w = 0;
-
-  /* check data transfer destination */
-  switch (scd.regs[0x04>>1].byte.h & 0x07)
-  {
-    case 2: /* MAIN-CPU host read */
-    case 3: /* SUB-CPU host read */
-    {
-      /* read 16-bit word from CDC RAM buffer (big-endian format) into gate-array register $08 */
-      /* Note: on real-hardware, 16-bit word is not immediately available, cf. https://github.com/MiSTer-devel/MegaCD_MiSTer/blob/master/docs/mcd%20logs/dma_sub_read.jpg for transfer timings */
-      scd.regs[0x08>>1].w = READ_WORD(cdc.ram, cdc.dac.w & 0x3ffe);
-#ifdef LOG_CDC
-      error("CDC host read 0x%04x -> 0x%04x (dbc=0x%x) (%X)\n", cdc.dac.w, scd.regs[0x08>>1].w, cdc.dbc.w, s68k.pc);
-#endif
-
-      /* set DSR bit (gate-array register $04) */
-      scd.regs[0x04>>1].byte.h |= 0x40;
-
-      /* increment data address counter */
-      cdc.dac.w += 2;
-
-      /* decrement data byte counter */
-      cdc.dbc.w -= 2;
-
-      /* end of transfer ? */
-      if ((int16)cdc.dbc.w < 0)
-      {
-        /* reset data byte counter (DBCH bits 4-7 should also be set to 1) */
-        cdc.dbc.w = 0xffff;
-
-        /* clear !DTEN and !DTBSY */
-        cdc.ifstat |= (BIT_DTBSY | BIT_DTEN);
-
-        /* pending Data Transfer End interrupt */
-        cdc.ifstat &= ~BIT_DTEI;
-
-        /* Data Transfer End interrupt enabled ? */
-        if (cdc.ifctrl & BIT_DTEIEN)
-        {
-          /* check end of CDC decoder active period */
-          if ((cdc.irq & BIT_DECI) && (cdc.cycles[0] > cdc.cycles[1]))
-          {
-            /* clear pending decoder interrupt */
-            cdc.ifstat |= BIT_DECI;
-
-            /* update CDC IRQ state */
-            cdc.irq &= ~BIT_DECI;
-          }
-
-          /* level 5 interrupt triggered only on CDC /INT falling edge with interrupt enabled on gate-array side */
-          if (!cdc.irq && (scd.regs[0x32>>1].byte.l & 0x20))
-          {
-            /* pending level 5 interrupt */
-            scd.pending |= (1 << 5);
-
-            /* update IRQ level */
-            s68k_update_irq((scd.pending & scd.regs[0x32>>1].byte.l) >> 1);
-          }
-
-          /* update CDC IRQ state */
-          cdc.irq |= BIT_DTEI;
-        }
-
-        /* set EDT bit (gate-array register $04) */
-        scd.regs[0x04>>1].byte.h |= 0x80;
-      }
-
-      break;
-    }
-
-    case 4: /* PCM RAM DMA */
-    {
-      cdc.dma_w = pcm_ram_dma_w;
-      break;
-    }
-
-    case 5: /* PRG-RAM DMA */
-    {
-      /* check if MAIN-CPU has access to PRG-RAM */
-      if (scd.regs[0x00].byte.l & 0x02)
-      {
-        /* halt DMA to PRG-RAM */
-        cdc.halted_dma_w = prg_ram_dma_w;
-      }
-      else
-      {
-        /* enable DMA to PRG-RAM */
-        cdc.dma_w = prg_ram_dma_w;
-      }
-      break;
-    }
-
-    case 7: /* Word-RAM DMA */
-    {
-      /* check memory mode */
-      if (scd.regs[0x02 >> 1].byte.l & 0x04)
-      {
-        /* 1M mode */
-        if (scd.regs[0x02 >> 1].byte.l & 0x01)
-        {
-          /* Word-RAM bank 0 is assigned to SUB-CPU */
-          cdc.dma_w = word_ram_0_dma_w;
-        }
-        else
-        {
-          /* Word-RAM bank 1 is assigned to SUB-CPU */
-          cdc.dma_w = word_ram_1_dma_w;
-        }
-      }
-      else
-      {
-        /* check if MAIN-CPU has access to 2M Word-RAM */
-        if (scd.regs[0x02 >> 1].byte.l & 0x01)
-        {
-          /* halt DMA to 2M Word-RAM */
-          cdc.halted_dma_w = word_ram_2M_dma_w;
-        }
-        else
-        {
-          /* enable DMA to 2M Word-RAM */
-          cdc.dma_w = word_ram_2M_dma_w;
-        }
-      }
-      break;
-    }
-
-    default: /* invalid */
-    {
-#ifdef LOG_CDC
-      error("invalid CDC transfer destination (%d)\n", scd.regs[0x04>>1].byte.h & 0x07);
-#endif
-      break;
-    }
-  }
-}
-
-void cdc_dma_update(unsigned int cycles)
-{
-  /* max number of bytes that can be transfered */
-  int dma_bytes = (cycles - cdc.cycles[0] + DMA_CYCLES_PER_BYTE - 1) / DMA_CYCLES_PER_BYTE;
-
-  /* always process blocks of 8 bytes */
-  dma_bytes = (dma_bytes / 8) * 8;
+  /* maximal transfer length */
+  int length = DMA_BYTES_PER_LINE;
 
   /* end of DMA transfer ? */
-  if (cdc.dbc.w < dma_bytes)
+  if (cdc.dbc.w < DMA_BYTES_PER_LINE)
   {
-    /* transfer remaining bytes using DMA */
-    cdc.dma_w(cdc.dbc.w + 1);
+    /* transfer remaining words using 16-bit DMA */
+    cdc.dma_w((cdc.dbc.w + 1) >> 1);
 
-    /* update DMA cycle counter */
-    cdc.cycles[0] += (cdc.dbc.w + 1) * DMA_CYCLES_PER_BYTE;
-
-    /* reset data byte counter (DBCH bits 4-7 should also be set to 1) */
-    cdc.dbc.w = 0xffff;
+    /* reset data byte counter (DBCH bits 4-7 should be set to 1) */
+    cdc.dbc.w = 0xf000;
 
     /* clear !DTEN and !DTBSY */
     cdc.ifstat |= (BIT_DTBSY | BIT_DTEN);
@@ -414,28 +134,15 @@ void cdc_dma_update(unsigned int cycles)
     /* Data Transfer End interrupt enabled ? */
     if (cdc.ifctrl & BIT_DTEIEN)
     {
-      /* check end of CDC decoder active period */
-      if ((cdc.irq & BIT_DECI) && (cdc.cycles[0] > cdc.cycles[1]))
+      /* pending level 5 interrupt */
+      scd.pending |= (1 << 5);
+
+      /* level 5 interrupt enabled ? */
+      if (scd.regs[0x32>>1].byte.l & 0x20)
       {
-        /* clear pending decoder interrupt */
-        cdc.ifstat |= BIT_DECI;
-
-        /* update CDC IRQ state */
-        cdc.irq &= ~BIT_DECI;
-      }
-
-      /* level 5 interrupt triggered only on CDC /INT falling edge with interrupt enabled on gate-array side*/
-      if (!cdc.irq && (scd.regs[0x32>>1].byte.l & 0x20))
-      {
-        /* pending level 5 interrupt */
-        scd.pending |= (1 << 5);
-
         /* update IRQ level */
         s68k_update_irq((scd.pending & scd.regs[0x32>>1].byte.l) >> 1);
       }
-
-      /* update CDC IRQ state */
-      cdc.irq |= BIT_DTEI;
     }
 
     /* clear DSR bit & set EDT bit (CD register $04) */
@@ -444,11 +151,8 @@ void cdc_dma_update(unsigned int cycles)
     /* SUB-CPU idle on register $04 polling ? */
     if (s68k.stopped & (1<<0x04))
     {
-      /* sync SUB-CPU with CDC DMA (only if not already ahead) */
-      if (s68k.cycles < cdc.cycles[0])
-      {
-        s68k.cycles = cdc.cycles[0];
-      }
+      /* sync SUB-CPU with CDC */
+      s68k.cycles = scd.cycles;
 
       /* restart SUB-CPU */
       s68k.stopped = 0;
@@ -457,28 +161,25 @@ void cdc_dma_update(unsigned int cycles)
 #endif
     }
 
-    /* disable DMA */
-    cdc.dma_w = cdc.halted_dma_w = 0;
+    /* disable DMA transfer */
+    cdc.dma_w = 0;
   }
-  else if (dma_bytes > 0)
+  else
   {
-    /* transfer limited amount of bytes using DMA */
-    cdc.dma_w(dma_bytes);
+    /* transfer all words using 16-bit DMA */
+    cdc.dma_w(DMA_BYTES_PER_LINE >> 1);
 
     /* decrement data byte counter */
-    cdc.dbc.w -= dma_bytes;
-
-    /* update DMA cycle counter */
-    cdc.cycles[0] += dma_bytes * DMA_CYCLES_PER_BYTE;
+    cdc.dbc.w -= length;
   }
 }
 
-void cdc_decoder_update(uint32 header)
+int cdc_decoder_update(uint32 header)
 {
   /* data decoding enabled ? */
   if (cdc.ctrl[0] & BIT_DECEN)
   {
-    /* update HEADx registers with current block header */
+    /* update HEAD registers */
     *(uint32 *)(cdc.head[0]) = header;
 
     /* set !VALST */
@@ -487,31 +188,24 @@ void cdc_decoder_update(uint32 header)
     /* pending decoder interrupt */
     cdc.ifstat &= ~BIT_DECI;
 
-    /* update CDC decoder end cycle (value adjusted for MCD-verificator CDC FLAGS Tests #40 & #41) */
-    cdc.cycles[1] = s68k.cycles + 269000;
-
     /* decoder interrupt enabled ? */
     if (cdc.ifctrl & BIT_DECIEN)
     {
-      /* level 5 interrupt triggered only on CDC /INT falling edge with interrupt enabled on gate-array side */
-      /* note: only check DTEI as DECI is cleared automatically between decoder interrupt triggering */
-      if (!(cdc.irq & BIT_DTEI) && (scd.regs[0x32>>1].byte.l & 0x20))
-      {
-        /* pending level 5 interrupt */
-        scd.pending |= (1 << 5);
+      /* pending level 5 interrupt */
+      scd.pending |= (1 << 5);
 
+      /* level 5 interrupt enabled ? */
+      if (scd.regs[0x32>>1].byte.l & 0x20)
+      {
         /* update IRQ level */
         s68k_update_irq((scd.pending & scd.regs[0x32>>1].byte.l) >> 1);
       }
-
-      /* update CDC IRQ state */
-      cdc.irq |= BIT_DECI;
     }
 
     /* buffer RAM write enabled ? */
     if (cdc.ctrl[0] & BIT_WRRQ)
     {
-      int offset;
+      uint16 offset;
 
       /* increment block pointer  */
       cdc.pt.w += 2352;
@@ -522,85 +216,55 @@ void cdc_decoder_update(uint32 header)
       /* CDC buffer address */
       offset = cdc.pt.w & 0x3fff;
 
-      /* write current block header to RAM buffer (4 bytes) */
+      /* write CDD block header (4 bytes) */
       *(uint32 *)(cdc.ram + offset) = header;
-      offset += 4;
 
-      /* check decoded block mode */
-      if (cdc.head[0][3] == 0x01)
-      {
-        /* write Mode 1 user data to RAM buffer (2048 bytes) */
-        cdd_read_data(cdc.ram + offset, NULL);
-        offset += 2048;
-      }
-      else
-      {
-        /* check if CD-ROM Mode 2 decoding is enabled */
-        if (cdc.ctrl[1] & BIT_MODRQ)
-        {
-          /* update HEADx registers with current block sub-header & write Mode 2 user data to RAM buffer (max 2328 bytes) */
-          cdd_read_data(cdc.ram + offset + 8, cdc.head[1]);
-
-          /* write current block sub-header to RAM buffer (4 bytes x 2) */
-          *(uint32 *)(cdc.ram + offset) = *(uint32 *)(cdc.head[1]);
-          *(uint32 *)(cdc.ram + offset + 4) = *(uint32 *)(cdc.head[1]);
-          offset += 2336;
-        }
-        else
-        {
-          /* update HEADx registers with current block sub-header & write Mode 2 user data to RAM buffer (max 2328 bytes) */
-          /* NB: when Mode 2 decoding is disabled, sub-header is apparently not written to RAM buffer (required by Wonder Library) */
-          cdd_read_data(cdc.ram + offset, cdc.head[1]);
-          offset += 2328;
-        }
-
-        /* set STAT2 register FORM bit according to sub-header FORM bit when CTRL0 register AUTORQ bit is set */
-        if (cdc.ctrl[0] & BIT_AUTORQ)
-        {
-          cdc.stat[2] = (cdc.ctrl[1] & BIT_MODRQ) | ((cdc.head[1][2] & 0x20) >> 3);
-        }
-      }
+      /* write CDD block data (2048 bytes) */
+      cdd_read_data(cdc.ram + 4 + offset);
 
       /* take care of buffer overrun */
-      if (offset > 0x4000)
+      if (offset > (0x4000 - 2048 - 4))
       {
         /* data should be written at the start of buffer */
-        memcpy(cdc.ram, cdc.ram + 0x4000, offset - 0x4000);
+        memcpy(cdc.ram, cdc.ram + 0x4000, offset + 2048 + 4 - 0x4000);
       }
+
+      /* read next data block */
+      return 1;
     }
   }
+
+  /* keep decoding same data block if Buffer Write is disabled */
+  return 0;
 }
 
 void cdc_reg_w(unsigned char data)
 {
 #ifdef LOG_CDC
-  error("CDC register %d write 0x%04x (%X)\n", scd.regs[0x04>>1].byte.l, data, s68k.pc);
+  error("CDC register %X write 0x%04x (%X)\n", scd.regs[0x04>>1].byte.l & 0x0F, data, s68k.pc);
 #endif
-  switch (scd.regs[0x04>>1].byte.l)
+  switch (scd.regs[0x04>>1].byte.l & 0x0F)
   {
     case 0x01:  /* IFCTRL */
     {
-      /* previous CDC IRQ state */
-      uint8 prev_irq = cdc.irq;
-
-      /* check end of CDC decoder active period */
-      if (s68k.cycles > cdc.cycles[1])
-      {
-        /* clear pending decoder interrupt */
-        cdc.ifstat |= BIT_DECI;
-
-        /* update previous CDC IRQ state */
-        prev_irq &= ~BIT_DECI;
-      }
-      
-      /* update CDC IRQ state according to DTEIEN and DECIEN bits */
-      cdc.irq = ~cdc.ifstat & data & (BIT_DTEIEN | BIT_DECIEN);
-
-      /* level 5 interrupt is triggered on CDC /INT falling edge if interrupt enabled on gate-array side */
-      if (cdc.irq && !prev_irq && (scd.regs[0x32>>1].byte.l & 0x20))
+      /* pending interrupts ? */
+      if (((data & BIT_DTEIEN) && !(cdc.ifstat & BIT_DTEI)) ||
+          ((data & BIT_DECIEN) && !(cdc.ifstat & BIT_DECI)))
       {
         /* pending level 5 interrupt */
         scd.pending |= (1 << 5);
+
+        /* level 5 interrupt enabled ? */
+        if (scd.regs[0x32>>1].byte.l & 0x20)
+        {
+          /* update IRQ level */
+          s68k_update_irq((scd.pending & scd.regs[0x32>>1].byte.l) >> 1);
+        }
+      }
+      else if (scd.pending & (1 << 5))
+      {
+        /* clear pending level 5 interrupts */
+        scd.pending &= ~(1 << 5);
 
         /* update IRQ level */
         s68k_update_irq((scd.pending & scd.regs[0x32>>1].byte.l) >> 1);
@@ -611,29 +275,31 @@ void cdc_reg_w(unsigned char data)
       {
         /* clear !DTBSY and !DTEN */
         cdc.ifstat |= (BIT_DTBSY | BIT_DTEN);
-
-        /* disable DMA */
-        cdc.dma_w = cdc.halted_dma_w = 0;
       }
 
       cdc.ifctrl = data;
+      scd.regs[0x04>>1].byte.l = 0x02;
       break;
     }
 
     case 0x02:  /* DBCL */
       cdc.dbc.byte.l = data;
+      scd.regs[0x04>>1].byte.l = 0x03;
       break;
 
     case 0x03:  /* DBCH */
-      cdc.dbc.byte.h = data & 0x0f;
+      cdc.dbc.byte.h = data;
+      scd.regs[0x04>>1].byte.l = 0x04;
       break;
 
     case 0x04:  /* DACL */
       cdc.dac.byte.l = data;
+      scd.regs[0x04>>1].byte.l = 0x05;
       break;
 
     case 0x05:  /* DACH */
       cdc.dac.byte.h = data;
+      scd.regs[0x04>>1].byte.l = 0x06;
       break;
 
     case 0x06:  /* DTRG */
@@ -641,19 +307,81 @@ void cdc_reg_w(unsigned char data)
       /* start data transfer if data output is enabled */
       if (cdc.ifctrl & BIT_DOUTEN)
       {
-        /* set !DTBSY and !DTEN */
-        cdc.ifstat &= ~(BIT_DTBSY | BIT_DTEN);
+        /* set !DTBSY */
+        cdc.ifstat &= ~BIT_DTBSY;
 
-        /* clear EDT & DSR bits (gate-array register $04) */
+        /* clear DBCH bits 4-7 */
+        cdc.dbc.byte.h &= 0x0f;
+
+        /* clear EDT & DSR bits (SCD register $04) */
         scd.regs[0x04>>1].byte.h &= 0x07;
 
-        /* initialize data transfer destination */
-        cdc_dma_init();
+        /* setup data transfer destination */
+        switch (scd.regs[0x04>>1].byte.h & 0x07)
+        {
+          case 2: /* MAIN-CPU host read */
+          case 3: /* SUB-CPU host read */
+          {
+            /* set !DTEN */
+            cdc.ifstat &= ~BIT_DTEN;
 
-        /* initialize DMA cycle counter */
-        cdc.cycles[0] = s68k.cycles;
+            /* set DSR bit (register $04) */
+            scd.regs[0x04>>1].byte.h |= 0x40;
+            break;
+          }
+
+          case 4: /* PCM RAM DMA */
+          {
+            cdc.dma_w = pcm_ram_dma_w;
+            break;
+          }
+
+          case 5: /* PRG-RAM DMA */
+          {
+            cdc.dma_w = prg_ram_dma_w;
+            break;
+          }
+
+          case 7: /* WORD-RAM DMA */
+          {
+            /* check memory mode */
+            if (scd.regs[0x02 >> 1].byte.l & 0x04)
+            {
+              /* 1M mode */
+              if (scd.regs[0x02 >> 1].byte.l & 0x01)
+              {
+                /* Word-RAM bank 0 is assigned to SUB-CPU */
+                cdc.dma_w = word_ram_0_dma_w;
+              }
+              else
+              {
+                /* Word-RAM bank 1 is assigned to SUB-CPU */
+                cdc.dma_w = word_ram_1_dma_w;
+              }
+            }
+            else
+            {
+              /* 2M mode */
+              if (scd.regs[0x02 >> 1].byte.l & 0x02)
+              {
+                /* only process DMA if Word-RAM is assigned to SUB-CPU */
+                cdc.dma_w = word_ram_2M_dma_w;
+              }
+            }
+            break;
+          }
+
+          default: /* invalid */
+          {
+    #ifdef LOG_CDC
+            error("invalid CDC tranfer destination (%d)\n", scd.regs[0x04>>1].byte.h & 0x07);
+    #endif
+            break;
+          }
+        }
       }
 
+      scd.regs[0x04>>1].byte.l = 0x07;
       break;
     }
 
@@ -662,17 +390,32 @@ void cdc_reg_w(unsigned char data)
       /* clear pending data transfer end interrupt */
       cdc.ifstat |= BIT_DTEI;
 
-      /* update CDC IRQ state */
-      cdc.irq &= ~BIT_DTEI;
+      /* clear DBCH bits 4-7 */
+      cdc.dbc.byte.h &= 0x0f;
+
+#if 0
+      /* no pending decoder interrupt ? */
+      if ((cdc.ifstat | BIT_DECI) || !(cdc.ifctrl & BIT_DECIEN))
+      {
+        /* clear pending level 5 interrupt */
+        scd.pending &= ~(1 << 5);
+
+        /* update IRQ level */
+        s68k_update_irq((scd.pending & scd.regs[0x32>>1].byte.l) >> 1);
+      }
+#endif
+      scd.regs[0x04>>1].byte.l = 0x08;
       break;
     }
 
     case 0x08:  /* WAL */
       cdc.wa.byte.l = data;
+      scd.regs[0x04>>1].byte.l = 0x09;
       break;
 
     case 0x09:  /* WAH */
       cdc.wa.byte.h = data;
+      scd.regs[0x04>>1].byte.l = 0x0a;
       break;
 
     case 0x0a:  /* CTRL0 */
@@ -680,176 +423,128 @@ void cdc_reg_w(unsigned char data)
       /* set CRCOK bit only if decoding is enabled */
       cdc.stat[0] = data & BIT_DECEN;
 
-      /* decoding disabled ? */
-      if (!(data & BIT_DECEN))
-      {
-        /* clear pending decoder interrupt */
-        cdc.ifstat |= BIT_DECI;
-
-        /* update CDC IRQ state */
-        cdc.irq &= ~BIT_DECI;
-      }
-
-      /* update STAT2 register */
+      /* update decoding mode */
       if (data & BIT_AUTORQ)
       {
-        /* set MODE bit according to CTRL1 register MODRQ bit & set FORM bit according to sub-header FORM bit*/
-        cdc.stat[2] = (cdc.ctrl[1] & BIT_MODRQ) | ((cdc.head[1][2] & 0x20) >> 3);
+        /* set MODE bit according to CTRL1 register & clear FORM bit */
+        cdc.stat[2] = cdc.ctrl[1] & BIT_MODRQ;
       }
-      else 
+      else
       {
-        /* set MODE & FORM bits according to CTRL1 register MODRQ & FORMRQ bits */
+        /* set MODE & FORM bits according to CTRL1 register */
         cdc.stat[2] = cdc.ctrl[1] & (BIT_MODRQ | BIT_FORMRQ);
       }
 
       cdc.ctrl[0] = data;
+      scd.regs[0x04>>1].byte.l = 0x0b;
       break;
     }
 
     case 0x0b:  /* CTRL1 */
     {
-      /* update STAT2 register */
+      /* update decoding mode */
       if (cdc.ctrl[0] & BIT_AUTORQ)
       {
-        /* set MODE bit according to CTRL1 register MODRQ bit & set FORM bit according to sub-header FORM bit*/
-        cdc.stat[2] = (data & BIT_MODRQ) | ((cdc.head[1][2] & 0x20) >> 3);
+        /* set MODE bit according to CTRL1 register & clear FORM bit */
+        cdc.stat[2] = data & BIT_MODRQ;
       }
-      else 
+      else
       {
-        /* set MODE & FORM bits according to CTRL1 register MODRQ & FORMRQ bits */
+        /* set MODE & FORM bits according to CTRL1 register */
         cdc.stat[2] = data & (BIT_MODRQ | BIT_FORMRQ);
       }
 
       cdc.ctrl[1] = data;
+      scd.regs[0x04>>1].byte.l = 0x0c;
       break;
     }
 
     case 0x0c:  /* PTL */
       cdc.pt.byte.l = data;
+      scd.regs[0x04>>1].byte.l = 0x0d;
       break;
-  
+
     case 0x0d:  /* PTH */
       cdc.pt.byte.h = data;
+      scd.regs[0x04>>1].byte.l = 0x0e;
+      break;
+
+    case 0x0e:  /* CTRL2 (unused) */
+      scd.regs[0x04>>1].byte.l = 0x0f;
       break;
 
     case 0x0f:  /* RESET */
       cdc_reset();
       break;
 
-    default:  /* unemulated registers */
+    default:  /* by default, SBOUT is not used */
       break;
-  }
-
-  /* increment address register (except when register #0 is selected) */
-  if (scd.regs[0x04>>1].byte.l)
-  {
-    scd.regs[0x04>>1].byte.l = (scd.regs[0x04>>1].byte.l + 1) & cdc.ar_mask;
   }
 }
 
 unsigned char cdc_reg_r(void)
 {
-  uint8 data;
-
-  switch (scd.regs[0x04>>1].byte.l)
+  switch (scd.regs[0x04>>1].byte.l & 0x0F)
   {
     case 0x01:  /* IFSTAT */
-    {
-      /* check end of CDC decoder active period */
-      if (s68k.cycles > cdc.cycles[1])
-      {
-        /* clear pending decoder interrupt */
-        cdc.ifstat |= BIT_DECI;
-
-        /* update CDC IRQ state */
-        cdc.irq &= ~BIT_DECI;
-      }
-
-      data = cdc.ifstat;
-      break;
-    }
+      scd.regs[0x04>>1].byte.l = 0x02;
+      return cdc.ifstat;
 
     case 0x02:  /* DBCL */
-    {
-      data = cdc.dbc.byte.l;
-      break;
-    }
+      scd.regs[0x04>>1].byte.l = 0x03;
+      return cdc.dbc.byte.l;
 
     case 0x03:  /* DBCH */
-    {
-      data = cdc.dbc.byte.h;
-      break;
-    }
+      scd.regs[0x04>>1].byte.l = 0x04;
+      return cdc.dbc.byte.h;
 
     case 0x04:  /* HEAD0 */
-    {
-      data = cdc.head[cdc.ctrl[1] & BIT_SHDREN][0];
-      break;
-    }
+      scd.regs[0x04>>1].byte.l = 0x05;
+      return cdc.head[cdc.ctrl[1] & BIT_SHDREN][0];
 
     case 0x05:  /* HEAD1 */
-    {
-      data = cdc.head[cdc.ctrl[1] & BIT_SHDREN][1];
-      break;
-    }
+      scd.regs[0x04>>1].byte.l = 0x06;
+      return cdc.head[cdc.ctrl[1] & BIT_SHDREN][1];
 
     case 0x06:  /* HEAD2 */
-    {
-      data = cdc.head[cdc.ctrl[1] & BIT_SHDREN][2];
-      break;
-    }
+      scd.regs[0x04>>1].byte.l = 0x07;
+      return cdc.head[cdc.ctrl[1] & BIT_SHDREN][2];
 
     case 0x07:  /* HEAD3 */
-    {
-      data = cdc.head[cdc.ctrl[1] & BIT_SHDREN][3];
-      break;
-    }
+      scd.regs[0x04>>1].byte.l = 0x08;
+      return cdc.head[cdc.ctrl[1] & BIT_SHDREN][3];
 
     case 0x08:  /* PTL */
-    {
-      data = cdc.pt.byte.l;
-      break;
-    }
+      scd.regs[0x04>>1].byte.l = 0x09;
+      return cdc.pt.byte.l;
 
     case 0x09:  /* PTH */
-    {
-      data = cdc.pt.byte.h;
-      break;
-    }
+      scd.regs[0x04>>1].byte.l = 0x0a;
+      return cdc.pt.byte.h;
 
     case 0x0a:  /* WAL */
-    {
-      data = cdc.wa.byte.l;
-      break;
-    }
+      scd.regs[0x04>>1].byte.l = 0x0b;
+      return cdc.wa.byte.l;
 
     case 0x0b:  /* WAH */
-    {
-      data = cdc.wa.byte.h;
-      break;
-    }
+      scd.regs[0x04>>1].byte.l = 0x0c;
+      return cdc.wa.byte.h;
 
     case 0x0c: /* STAT0 */
-    {
-      data = cdc.stat[0];
-      break;
-    }
+      scd.regs[0x04>>1].byte.l = 0x0d;
+      return cdc.stat[0];
 
     case 0x0d: /* STAT1 (always return 0) */
-    {
-      data = 0x00;
-      break;
-    }
+      scd.regs[0x04>>1].byte.l = 0x0e;
+      return 0x00;
 
     case 0x0e:  /* STAT2 */
-    {
-      data = cdc.stat[2];
-      break;
-    }
+      scd.regs[0x04>>1].byte.l = 0x0f;
+      return cdc.stat[2];
 
     case 0x0f:  /* STAT3 */
     {
-      data = cdc.stat[3];
+      uint8 data = cdc.stat[3];
 
       /* clear !VALST (note: this is not 100% correct but BIOS do not seem to care) */
       cdc.stat[3] = BIT_VALST;
@@ -857,104 +552,85 @@ unsigned char cdc_reg_r(void)
       /* clear pending decoder interrupt */
       cdc.ifstat |= BIT_DECI;
 
-      /* update CDC IRQ state */
-      cdc.irq &= ~BIT_DECI;
-      break;
-    }
+#if 0
+      /* no pending data transfer end interrupt */
+      if ((cdc.ifstat | BIT_DTEI) || !(cdc.ifctrl & BIT_DTEIEN))
+      {
+        /* clear pending level 5 interrupt */
+        scd.pending &= ~(1 << 5);
 
-    default:  /* unemulated registers */
-    {
-      data = 0xff;
-      break;
-    }
-  }
-
-#ifdef LOG_CDC
-  error("CDC register %d read 0x%02X (%X)\n", scd.regs[0x04>>1].byte.l, data, s68k.pc);
+        /* update IRQ level */
+        s68k_update_irq((scd.pending & scd.regs[0x32>>1].byte.l) >> 1);
+      }
 #endif
 
-  /* increment address register (except when register #0 is selected) */
-  if (scd.regs[0x04>>1].byte.l)
-  {
-    scd.regs[0x04>>1].byte.l = (scd.regs[0x04>>1].byte.l + 1) & cdc.ar_mask;
+      scd.regs[0x04>>1].byte.l = 0x00;
+      return data;
+    }
+
+    default:  /* by default, COMIN is always empty */
+      return 0xff;
   }
-  
-  return data;
 }
 
-unsigned short cdc_host_r(uint8 cpu_access)
+unsigned short cdc_host_r(void)
 {
-  /* read CDC buffered data (gate-array register $08) */
-  uint16 data = scd.regs[0x08>>1].w;
-
-  /* check if host data transfer is started for selected CPU */
-  if ((scd.regs[0x04>>1].byte.h & 0x47) == cpu_access)
+  /* check if data is available */
+  if (!(cdc.ifstat & BIT_DTEN))
   {
-    /* check if EDT bit (gate-array register $04) is set (host data transfer is finished) */
-    if (scd.regs[0x04>>1].byte.h & 0x80)
-    {
-      /* clear DSR bit (gate-array register $04) */
-      scd.regs[0x04>>1].byte.h &= ~0x40;
-    }
-    else
-    {
-      /* read next 16-bit word from CDC RAM buffer (big-endian format) into gate-array register $08 */
-      /* Note: on real-hardware, 16-bit word is not immediately available, cf. https://github.com/MiSTer-devel/MegaCD_MiSTer/blob/master/docs/mcd%20logs/dma_sub_read.jpg for transfer timings */
-      scd.regs[0x08>>1].w = READ_WORD(cdc.ram, cdc.dac.w & 0x3ffe);
-#ifdef LOG_CDC
-      error("CDC host read 0x%04x -> 0x%04x (dbc=0x%x) (%X)\n", cdc.dac.w, scd.regs[0x08>>1].w, cdc.dbc.w, s68k.pc);
+    /* read data word from CDC RAM buffer */
+    uint16 data = *(uint16 *)(cdc.ram + (cdc.dac.w & 0x3ffe));
+
+#ifdef LSB_FIRST
+    /* source data is stored in big endian format */
+    data = ((data >> 8) | (data << 8)) & 0xffff;
 #endif
 
-      /* increment data address counter */
-      cdc.dac.w += 2;
+#ifdef LOG_CDC
+    error("CDC host read 0x%04x -> 0x%04x (dbc=0x%x) (%X)\n", cdc.dac.w, data, cdc.dbc.w, s68k.pc);
+#endif
 
-      /* decrement data byte counter */
-      cdc.dbc.w -= 2;
+    /* increment data address counter */
+    cdc.dac.w += 2;
 
-      /* end of transfer ? */
-      if ((int16)cdc.dbc.w < 0)
+    /* decrement data byte counter */
+    cdc.dbc.w -= 2;
+
+    /* end of transfer ? */
+    if ((int16)cdc.dbc.w <= 0)
+    {
+      /* reset data byte counter (DBCH bits 4-7 should be set to 1) */
+      cdc.dbc.w = 0xf000;
+
+      /* clear !DTEN and !DTBSY */
+      cdc.ifstat |= (BIT_DTBSY | BIT_DTEN);
+
+      /* pending Data Transfer End interrupt */
+      cdc.ifstat &= ~BIT_DTEI;
+
+      /* Data Transfer End interrupt enabled ? */
+      if (cdc.ifctrl & BIT_DTEIEN)
       {
-        /* reset data byte counter (DBCH bits 4-7 should also be set to 1) */
-        cdc.dbc.w = 0xffff;
+        /* pending level 5 interrupt */
+        scd.pending |= (1 << 5);
 
-        /* clear !DTEN and !DTBSY */
-        cdc.ifstat |= (BIT_DTBSY | BIT_DTEN);
-
-        /* pending Data Transfer End interrupt */
-        cdc.ifstat &= ~BIT_DTEI;
-
-        /* Data Transfer End interrupt enabled ? */
-        if (cdc.ifctrl & BIT_DTEIEN)
+        /* level 5 interrupt enabled ? */
+        if (scd.regs[0x32>>1].byte.l & 0x20)
         {
-          /* check end of CDC decoder active period */
-          if ((cdc.irq & BIT_DECI) && (cdc.cycles[0] > cdc.cycles[1]))
-          {
-            /* clear pending decoder interrupt */
-            cdc.ifstat |= BIT_DECI;
-
-            /* update CDC IRQ state */
-            cdc.irq &= ~BIT_DECI;
-          }
-
-          /* level 5 interrupt triggered only on CDC /INT falling edge with interrupt enabled on gate-array side */
-          if (!cdc.irq && (scd.regs[0x32>>1].byte.l & 0x20))
-          {
-            /* pending level 5 interrupt */
-            scd.pending |= (1 << 5);
-
-            /* update IRQ level */
-            s68k_update_irq((scd.pending & scd.regs[0x32>>1].byte.l) >> 1);
-          }
-
-          /* update CDC IRQ state */
-          cdc.irq |= BIT_DTEI;
+          /* update IRQ level */
+          s68k_update_irq((scd.pending & scd.regs[0x32>>1].byte.l) >> 1);
         }
-
-        /* set EDT bit (gate-array register $04) */
-        scd.regs[0x04>>1].byte.h |= 0x80;
       }
+
+      /* clear DSR bit & set EDT bit (SCD register $04) */
+      scd.regs[0x04>>1].byte.h = (scd.regs[0x04>>1].byte.h & 0x07) | 0x80;
     }
+
+    return data;
   }
 
-  return data;
+#ifdef LOG_CDC
+  error("error reading CDC host (data transfer disabled)\n");
+#endif
+  return 0xffff;
 }

@@ -31,8 +31,6 @@
     - added proper cycle use on reset
     - added cycle accurate timings for MUL/DIV instructions (thanks to Jorge Cwik !) 
     - fixed undocumented flags for DIV instructions (Blood Shot)
-    - fixed undocumented behaviors for ABCD/SBCD/NBCD instructions (thanks to flamewing for his test ROM)
-    - improved auto-vectored interrupts acknowledge cycle timing accuracy
     - added MAIN-CPU & SUB-CPU support for Mega CD emulation
     
   */
@@ -43,9 +41,6 @@
 
 #include <setjmp.h>
 #include "macros.h"
-#ifdef HOOK_CPU
-#include "cpuhook.h"
-#endif
 
 /* ======================================================================== */
 /* ==================== ARCHITECTURE-DEPENDANT DEFINES ==================== */
@@ -236,16 +231,13 @@ typedef struct
 {
   cpu_memory_map memory_map[256]; /* memory mapping */
 
-  cpu_idle_t poll;      /* polling detection */
+  cpu_idle_t poll;      /* polling detection */ // 0x1400
 
-  sint cycles;          /* current master cycle count */ 
-  sint refresh_cycles;  /* external bus refresh cycle */ 
+  uint cycles;          /* current master cycle count */ 
   uint cycle_end;       /* aimed master cycle count for current execution frame */
 
   uint dar[16];         /* Data and Address Registers */
   uint pc;              /* Program Counter */
-  uint prev_pc;         /* Previous Program Counter */
-  uint prev_ar[8];      /* Previous Address Registers */
   uint sp[5];           /* User and Interrupt Stack Pointers */
   uint ir;              /* Instruction Register */
   uint t1_flag;         /* Trace 1 */
@@ -273,10 +265,6 @@ typedef struct
   uint tracing;         /* Tracing enable flag */
 
   uint address_space;   /* Current FC code */
-
-#ifdef M68K_OVERCLOCK_SHIFT
-  int cycle_ratio;
-#endif
 
   /* Callbacks to host */
   int  (*int_ack_callback)(int int_line);           /* Interrupt Acknowledge */
@@ -366,10 +354,6 @@ extern void s68k_pulse_reset(void);
 extern void m68k_run(unsigned int cycles);
 extern void s68k_run(unsigned int cycles);
 
-/* Get current instruction execution time */
-extern int m68k_cycles(void);
-extern int s68k_cycles(void);
-
 /* Set the IPL0-IPL2 pins on the CPU (IRQ).
  * A transition from < 7 to 7 will cause a non-maskable interrupt (NMI).
  * Setting IRQ to 0 will clear an interrupt request.
@@ -385,9 +369,6 @@ extern void m68k_clear_halt(void);
 extern void s68k_pulse_halt(void);
 extern void s68k_clear_halt(void);
 
-/* Put the CPU in waiting state until DTACK pin is asserted during bus access */
-extern void s68k_pulse_wait(unsigned int address, unsigned int write_access);
-extern void s68k_clear_wait(void);
 
 /* Peek at the internals of a CPU context.  This can either be a context
  * retrieved using m68k_get_context() or the currently running context.

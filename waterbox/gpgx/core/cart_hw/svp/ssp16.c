@@ -219,7 +219,7 @@
 #define IJind  (((op>>6)&4)|(op&3))
 
 #define GET_PC() (PC - (unsigned short *)svp->iram_rom)
-#define GET_PPC_OFFS() ((unsigned char *)PC - svp->iram_rom - 2)
+#define GET_PPC_OFFS() ((uintptr_t)PC - (uintptr_t)svp->iram_rom - 2)
 #define SET_PC(d) PC = (unsigned short *)svp->iram_rom + d
 
 #define REG_READ(r) (((r) <= 4) ? ssp->gr[r].byte.h : read_handlers[r]())
@@ -555,6 +555,9 @@ static u32 pm_io(int reg, int write, u32 d)
         elprintf(EL_SVP, "ssp ROM  r [%06x] %04x", CADDR,
           ((unsigned short *)cart.rom)[addr|((mode&0xf)<<16)]);
 #endif
+        /*if ((signed int)ssp->pmac_read[reg] >> 16 == -1) ssp->pmac_read[reg]++;
+        ssp->pmac_read[reg] += 1<<16;*/
+        if ((signed int)(ssp->pmac[0][reg] & 0xffff) == -1) ssp->pmac[0][reg] += 1<<16;
         ssp->pmac[0][reg] ++;
 
         d = ((unsigned short *)cart.rom)[addr|((mode&0xf)<<16)];
@@ -1279,7 +1282,7 @@ void ssp1601_run(int cycles)
 #endif
         break;
       case 0x3c:
-        OP_CMPA(op & 0xff); 
+        OP_CMPA(op & 0xff);
 #ifdef LOG_SVP
         if (op&0x100) elprintf(EL_SVP|EL_ANOMALY, "FIXME: simm with upper bit set");
 #endif
@@ -1304,7 +1307,7 @@ void ssp1601_run(int cycles)
 #endif
         break;
       case 0x7c:
-        OP_EORA(op & 0xff); 
+        OP_EORA(op & 0xff);
 #ifdef LOG_SVP
         if (op&0x100) elprintf(EL_SVP|EL_ANOMALY, "FIXME: simm with upper bit set");
 #endif
