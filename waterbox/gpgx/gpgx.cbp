@@ -200,10 +200,10 @@
 			<Option compilerVar="CC" />
 		</Unit>
 		<Unit filename="core/sound/eq.h" />
-		<Unit filename="core/sound/psg.c">
+		<Unit filename="core/sound/sn76489.c">
 			<Option compilerVar="CC" />
 		</Unit>
-		<Unit filename="core/sound/psg.h" />
+		<Unit filename="core/sound/sn76489.h" />
 		<Unit filename="core/sound/sound.c">
 			<Option compilerVar="CC" />
 		</Unit>
@@ -212,10 +212,10 @@
 			<Option compilerVar="CC" />
 		</Unit>
 		<Unit filename="core/sound/ym2413.h" />
-		<Unit filename="core/sound/ym3438.c">
+		<Unit filename="core/sound/ym2612.c">
 			<Option compilerVar="CC" />
 		</Unit>
-		<Unit filename="core/sound/ym3438.h" />
+		<Unit filename="core/sound/ym2612.h" />
 		<Unit filename="core/state.c">
 			<Option compilerVar="CC" />
 		</Unit>
