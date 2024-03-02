@@ -2,10 +2,10 @@
  *  Genesis Plus
  *  Video Display Processor (68k & Z80 CPU interface)
  *
- *  Support for SG-1000, Master System (315-5124 & 315-5246), Game Gear & Mega Drive VDP
+ *  Support for SG-1000 (TMS99xx & 315-5066), Master System (315-5124 & 315-5246), Game Gear & Mega Drive VDP
  *
- *  Copyright (C) 1998, 1999, 2000, 2001, 2002, 2003  Charles Mac Donald (original code)
- *  Copyright (C) 2007-2013  Eke-Eke (Genesis Plus GX)
+ *  Copyright (C) 1998-2003  Charles Mac Donald (original code)
+ *  Copyright (C) 2007-2024  Eke-Eke (Genesis Plus GX)
  *
  *  Redistribution and use of this code or any derivative works are permitted
  *  provided that the following conditions are met:
@@ -52,6 +52,8 @@ extern uint8 hint_pending;
 extern uint8 vint_pending;
 extern uint16 status;
 extern uint32 dma_length;
+extern uint32 dma_endCycles;
+extern uint8 dma_type;
 
 /* Global variables */
 extern uint16 ntab;
@@ -70,6 +72,7 @@ extern uint8 odd_frame;
 extern uint8 im2_flag;
 extern uint8 interlaced;
 extern uint8 vdp_pal;
+extern uint8 h_counter;
 extern uint16 v_counter;
 extern uint16 vc_max;
 extern uint16 vscroll;
@@ -78,6 +81,7 @@ extern uint16 max_sprite_pixels;
 extern int32 fifo_write_cnt;
 extern uint32 fifo_slots;
 extern uint32 hvc_latch;
+extern uint32 vint_cycle;
 extern const uint8 *hctab;
 
 /* Function pointers */
@@ -89,6 +93,8 @@ extern unsigned int (*vdp_z80_data_r)(void);
 /* Function prototypes */
 extern void vdp_init(void);
 extern void vdp_reset(void);
+extern int vdp_context_save(uint8 *state);
+extern int vdp_context_load(uint8 *state);
 extern void vdp_dma_update(unsigned int cycles);
 extern void vdp_68k_ctrl_w(unsigned int data);
 extern void vdp_z80_ctrl_w(unsigned int data);
@@ -99,10 +105,5 @@ extern unsigned int vdp_z80_ctrl_r(unsigned int cycles);
 extern unsigned int vdp_hvc_r(unsigned int cycles);
 extern void vdp_test_w(unsigned int data);
 extern int vdp_68k_irq_ack(int int_level);
-
-void write_cram_byte(int addr, uint8 val);
-void write_vram_byte(int addr, uint8 val);
-void flush_vram_cache(void);
-void vdp_invalidate_full_cache(void);
 
 #endif /* _VDP_H_ */

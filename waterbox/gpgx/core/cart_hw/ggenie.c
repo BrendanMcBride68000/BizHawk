@@ -1,8 +1,8 @@
 /****************************************************************************
  *  Genesis Plus
- *  Game Genie Hardware emulation
+ *  Game Genie hardware support
  *
- *  Copyright (C) 2009-2011  Eke-Eke (Genesis Plus GX)
+ *  Copyright (C) 2009-2021  Eke-Eke (Genesis Plus GX)
  *
  *  Based on documentation from Charles McDonald
  *  (http://cgfm2.emuviews.com/txt/genie.txt)
@@ -41,10 +41,9 @@
 
 #include "shared.h"
 
-struct
+static struct
 {
   uint8 enabled;
-  uint8 *rom;
   uint16 regs[0x20];
   uint16 old[6];
   uint16 data[6];
@@ -59,43 +58,28 @@ static void ggenie_write_regs(unsigned int offset, unsigned int data);
 
 void ggenie_init(void)
 {
-  int i;
-  FILE *f;
-  
-  memset(&ggenie,0,sizeof(ggenie));
+  ggenie.enabled = 0;
 
-    /* Store Game Genie ROM (32KB) above cartridge ROM (max. 8MB) */
-  if (cart.romsize > 0x800000) return;
-  ggenie.rom = cart.rom + 0x800000;
-
-  /* Open Game Genie ROM file */
-  f = fopen(GG_ROM,"rb");
-  if (f == NULL) return;
-
-  /* Load ROM */
-  for (i=0; i<0x8000; i+=0x1000)
+  /* Try to load Game Genie ROM file (32KB) */
+  if (load_archive(GG_ROM, cart.lockrom, 0x8000, NULL) > 0)
   {
-    fread(ggenie.rom + i, 0x1000, 1, f);
-  }
-
-  /* Close ROM file */
-  fclose(f);
-
 #ifdef LSB_FIRST
-  for (i=0; i<0x8000; i+=2)
-  {
-    /* Byteswap ROM */
-    uint8 temp = ggenie.rom[i];
-    ggenie.rom[i] = ggenie.rom[i+1];
-    ggenie.rom[i+1] = temp;
-  }
+    int i;
+    for (i=0; i<0x8000; i+=2)
+    {
+      /* Byteswap ROM */
+      uint8 temp = cart.lockrom[i];
+      cart.lockrom[i] = cart.lockrom[i+1];
+      cart.lockrom[i+1] = temp;
+    }
 #endif
 
-  /* $0000-$7fff mirrored into $8000-$ffff */
-  memcpy(ggenie.rom + 0x8000, ggenie.rom, 0x8000);
+    /* $0000-$7fff mirrored into $8000-$ffff */
+    memcpy(cart.lockrom + 0x8000, cart.lockrom, 0x8000);
 
-  /* set flag */
-  ggenie.enabled = 1;
+    /* Game Genie hardware is enabled */
+    ggenie.enabled = 1;
+  }
 }
 
 void ggenie_shutdown(void)
@@ -124,7 +108,7 @@ void ggenie_reset(int hard)
     }
 
     /* Game Genie ROM is mapped at $000000-$007fff */
-    m68k.memory_map[0].base = ggenie.rom;
+    m68k.memory_map[0].base = cart.lockrom;
 
     /* Internal registers are mapped at $000000-$00001f */
     m68k.memory_map[0].write8   = ggenie_write_byte;
@@ -225,7 +209,7 @@ static void ggenie_write_regs(unsigned int offset, unsigned int data)
     else
     {
       /* $0000-$7ffff reads mapped to Game Genie ROM */
-      m68k.memory_map[0].base = ggenie.rom;
+      m68k.memory_map[0].base = cart.lockrom;
       m68k.memory_map[0].read8 = NULL; 
       m68k.memory_map[0].read16 = NULL; 
 

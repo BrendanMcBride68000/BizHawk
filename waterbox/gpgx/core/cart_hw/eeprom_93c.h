@@ -41,11 +41,11 @@
 
 typedef enum
 {
-  WAIT_STANDBY93,
-  WAIT_START93,
-  GET_OPCODE93,
-  WRITE_WORD93,
-  READ_WORD93
+  WAIT_STANDBY,
+  WAIT_START,
+  GET_OPCODE,
+  WRITE_WORD,
+  READ_WORD
 } T_STATE_93C;
 
 typedef struct
@@ -65,7 +65,7 @@ typedef struct
 extern T_EEPROM_93C eeprom_93c;
 
 /* Function prototypes */
-extern void eeprom_93c_init();
+extern void eeprom_93c_init(void);
 extern void eeprom_93c_write(unsigned char data);
 extern unsigned char eeprom_93c_read(void);
 

@@ -2,7 +2,7 @@
  *  Genesis Plus
  *  CD compatible ROM/RAM cartridge support
  *
- *  Copyright (C) 2012  Eke-Eke (Genesis Plus GX)
+ *  Copyright (C) 2012-2021 Eke-Eke (Genesis Plus GX)
  *
  *  Redistribution and use of this code or any derivative works are permitted
  *  provided that the following conditions are met:
@@ -38,7 +38,6 @@
 
 #include "shared.h"
 
-
 /*--------------------------------------------------------------------------*/
 /* backup RAM cartridge (max. 512KB)                                        */
 /*--------------------------------------------------------------------------*/
@@ -49,7 +48,7 @@ static unsigned int cart_ram_read_byte(unsigned int address)
   {
     return scd.cartridge.area[(address >> 1) & scd.cartridge.mask];
   }
-
+  
   return 0xff;
 }
 
@@ -190,10 +189,7 @@ void cd_cart_init(void)
   else
   {
     /* enable 512K backup RAM cartridge when booting from CD (Mode 2) */
-    //scd.cartridge.id = 6;
-	//scd.cartridge.id = 4; // use 128K instead, which is the size of a real ebram cart
-						// bizhawk doesn't need the extra space because it gives each game its own anyway
-	  scd.cartridge.id = 1; // 16K to be size-frugal
+    scd.cartridge.id = 6;
   }
 
   /* RAM cartridge enabled ? */
@@ -202,9 +198,8 @@ void cd_cart_init(void)
     /* disable cartridge backup memory */
     memset(&sram, 0, sizeof (T_SRAM));
 
-	scd.cartridge.area = malloc(0x4000);
     /* clear backup RAM */
-    memset(scd.cartridge.area, 0x00, 0x4000);
+    memset(scd.cartridge.area, 0x00, sizeof(scd.cartridge.area));
 
     /* backup RAM size mask */
     scd.cartridge.mask = (1 << (scd.cartridge.id + 13)) - 1;

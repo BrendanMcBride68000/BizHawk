@@ -2,7 +2,7 @@
  *  Genesis Plus
  *  Backup RAM support
  *
- *  Copyright (C) 2007-2013  Eke-Eke (Genesis Plus GX)
+ *  Copyright (C) 2007-2024  Eke-Eke (Genesis Plus GX)
  *
  *  Redistribution and use of this code or any derivative works are permitted
  *  provided that the following conditions are met:
@@ -37,13 +37,8 @@
  ****************************************************************************************/
 
 #include "shared.h"
-#include "eeprom_i2c.h"
-#include "eeprom_spi.h"
-#include "eeprom_93c.h"
 
 T_SRAM sram;
-
-extern int cinterface_force_sram;
 
 /****************************************************************************
  * A quick guide to external RAM on the Genesis
@@ -54,8 +49,8 @@ extern int cinterface_force_sram;
  *  1B4h:   dc.l   RAM start address
  *  1B8h:   dc.l   RAM end address
  *   x 1 for BACKUP (not volatile), 0 for volatile RAM
- *   yz 10 if even address only
- *      11 if odd address only
+ *   yz 10 if even address only 
+ *      11 if odd address only 
  *      00 if both even and odd address
  *      01 others (serial EEPROM, RAM with 4-bit data bus, etc)
  *   abc 001 if SRAM
@@ -64,14 +59,24 @@ extern int cinterface_force_sram;
  *
  * Assuming max. 64k backup RAM throughout
  ****************************************************************************/
-void sram_init()
+void sram_init(void)
 {
- /* disable Backup RAM by default */
+  /* disable Backup RAM by default */
   sram.detected = sram.on = sram.custom = sram.start = sram.end = 0;
 
   /* initialize Backup RAM */
-  memset(sram.sram, 0xFF, 0x10000);
-  //sram.crc = crc32(0, sram.sram, 0x10000);
+  if (strstr(rominfo.international,"Sonic 1 Remastered"))
+  {
+    /* Sonic 1 Remastered hack crashes if backup RAM is not initialized to zero */
+    memset(sram.sram, 0x00, 0x10000);
+  }
+  else
+  {
+    /* by default, assume backup RAM is initialized to 0xFF (Micro Machines 2, Dino Dini Soccer)  */
+    memset(sram.sram, 0xFF, 0x10000);
+  }
+
+  sram.crc = crc32(0, sram.sram, 0x10000);
 
   /* retrieve informations from header */
   if ((READ_BYTE(cart.rom,0x1b0) == 0x52) && (READ_BYTE(cart.rom,0x1b1) == 0x41))
@@ -94,16 +99,25 @@ void sram_init()
       sram.end = 0x203fff;
     }
 
-    /* fixe games indicating internal RAM as volatile external RAM (Feng Kuang Tao Hua Yuan) */
+    /* fixes games indicating internal RAM as volatile external RAM (Feng Kuang Tao Hua Yuan) */
     else if (sram.start == 0xff0000)
     {
       /* backup RAM should be disabled */
       sram.on = 0;
     }
 
-    /* fixe other bad header informations */
+    /* fixes games with invalid SRAM start address */
+    else if (sram.start >= 0x800000)
+    {
+      /* forces 64KB static RAM mapped to $200000-$20ffff (default) */
+      sram.start = 0x200000;
+      sram.end = 0x20ffff;
+    }
+
+    /* fixes games with invalid SRAM end address */
     else if ((sram.start > sram.end) || ((sram.end - sram.start) >= 0x10000))
     {
+      /* forces 64KB static RAM max */
       sram.end = sram.start + 0xffff;
     }
   }
@@ -131,13 +145,20 @@ void sram_init()
       sram.start = 0x200001;
       sram.end = 0x203fff;
     }
-    else if (((rominfo.realchecksum == 0xaeaa) || (rominfo.realchecksum == 0x8dba)) &&
+    else if (((rominfo.realchecksum == 0xaeaa) || (rominfo.realchecksum == 0x8dba)) && 
              (rominfo.checksum ==  0x8104))
     {
       /* Xin Qigai Wangzi (use uncommon area) */
       sram.on = 1;
       sram.start = 0x400001;
       sram.end = 0x40ffff;
+    }
+    else if ((rominfo.checksum == 0x0000) && (rominfo.realchecksum == 0x1f7f) && (READ_BYTE(cart.rom + 0x80000,0x1b0) == 0x52) && (READ_BYTE(cart.rom + 0x80000,0x1b1) == 0x41))
+    {
+      /* Radica - Sensible Soccer Plus edition (use bankswitching) */
+      sram.on = 1;
+      sram.start = 0x200001;
+      sram.end = 0x203fff;
     }
     else if ((strstr(rominfo.ROMType,"SF") != NULL) && (strstr(rominfo.product,"001") != NULL))
     {
@@ -174,20 +195,7 @@ void sram_init()
         sram.end = 0x203fff;
       }
     }
-	else if (strstr(rominfo.product, "T-50166") != NULL)
-	{
-		/* Might and Magic Gates to Another World */
-		sram.on = 1;
-		sram.start = 0x200001;
-		sram.end = 0x203fff;
-	}
-	else if (strstr(rominfo.international, "MIGHT & MAGIC III") != NULL)
-	{
-		/* Might and Magic III - Isles of Terra (USA) (Proto) */
-		sram.on = 1;
-		sram.start = 0x200001;
-		sram.end = 0x203fff;
-	}
+
     /* auto-detect games which need disabled backup RAM */
     else if (strstr(rominfo.product,"T-113016") != NULL)
     {
@@ -200,11 +208,11 @@ void sram_init()
       /* this prevents backup RAM from being mapped in place of mirrored ROM when using S&K LOCK-ON feature */
       sram.on = 0;
     }
-    else if (cinterface_force_sram && cart.romsize <= 0x200000)
+
+    /* by default, enable backup RAM for ROM smaller than 2MB */
+    else if (cart.romsize <= 0x200000)
     {
-      // by default, gpgx enables saveram for all rom no bigger than 2MB
-	  // we don't do that because it confuses ram searches and debugging, and adds extra baggage to savestates
-	  // but some games do need it, so allow that to be hacked in here
+      /* 64KB static RAM mapped to $200000-$20ffff */
       sram.start = 0x200000;
       sram.end = 0x20ffff;
       sram.on = 1;
@@ -219,8 +227,7 @@ unsigned int sram_read_byte(unsigned int address)
 
 unsigned int sram_read_word(unsigned int address)
 {
-  address &= 0xfffe;
-  return (sram.sram[address + 1] | (sram.sram[address] << 8));
+  return READ_WORD(sram.sram, address & 0xfffe);
 }
 
 void sram_write_byte(unsigned int address, unsigned int data)
@@ -230,36 +237,5 @@ void sram_write_byte(unsigned int address, unsigned int data)
 
 void sram_write_word(unsigned int address, unsigned int data)
 {
-  address &= 0xfffe;
-  sram.sram[address] = data >> 8;
-  sram.sram[address + 1] = data & 0xff;
-}
-
-// the variables in SRAM_T are all part of "configuration", so we don't have to save those.
-// the only thing that needs to be saved is the SRAM itself and the SEEPROM struct (if applicable)
-
-int sram_get_actual_size()
-{
-	if (!sram.on)
-		return 0;
-	switch (sram.custom)
-	{
-	case 0: // plain bus access saveram
-		break;
-	case 1: // i2c
-		return eeprom_i2c.config.size_mask + 1;
-	case 2: // spi
-		return 0x10000; // it doesn't appear to mask anything internally
-	case 3: // 93c
-		return 0x10000; // SMS only and i don't have time to look into it
-	default:
-		return 0x10000; // who knows
-	}
-	// figure size for plain bus access saverams
-	{
-		int startaddr = sram.start / 8192;
-		int endaddr = sram.end / 8192 + 1;
-		int size = (endaddr - startaddr) * 8192;
-		return size;
-	}
+  WRITE_WORD(sram.sram, address & 0xfffe, data);
 }

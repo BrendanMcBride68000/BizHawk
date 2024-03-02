@@ -1,8 +1,8 @@
 /***************************************************************************************
  *  Genesis Plus
- *  Mega CD / Sega CD hardware
+ *  Mega-CD / Sega CD hardware
  *
- *  Copyright (C) 2012-2013  Eke-Eke (Genesis Plus GX)
+ *  Copyright (C) 2012-2024  Eke-Eke (Genesis Plus GX)
  *
  *  Redistribution and use of this code or any derivative works are permitted
  *  provided that the following conditions are met:
@@ -44,33 +44,45 @@
 #include "pcm.h"
 #include "cd_cart.h"
 
+#ifdef USE_DYNAMIC_ALLOC
+#define scd ext->cd_hw
+#else
 #define scd ext.cd_hw
+#endif
 
-/* 5000000 SCD clocks/s = ~3184 clocks/line with a Master Clock of 53.693175 MHz */
-/* This would be slightly (~30 clocks) more on PAL systems because of the slower */
-/* Master Clock (53.203424 MHz) but not enough to really care about since clocks */
-/* are not running in sync anyway. */
+/* CD hardware models */
+#define CD_TYPE_DEFAULT       0x00
+#define CD_TYPE_WONDERMEGA    0x01
+#define CD_TYPE_WONDERMEGA_M2 0x02
+#define CD_TYPE_CDX           0x03
+
+/* CD hardware Master Clock (50 MHz) */
 #define SCD_CLOCK 50000000
-#define SCYCLES_PER_LINE 3184
+
+/* ~3184 SCD clocks/line on NTSC system (53.693175 MHz Master Clock) */
+/* ~3214 SCD clocks/line on PAL system (53.203424 MHz Master Clock) */
+#define SCYCLES_PER_LINE scd.cycles_per_line
 
 /* Timer & Stopwatch clocks divider */
 #define TIMERS_SCYCLES_RATIO (384 * 4)
 
 /* CD hardware */
-typedef struct
+typedef struct 
 {
   cd_cart_t cartridge;        /* ROM/RAM Cartridge */
-  uint8 *bootrom;     /* 128K internal BOOT ROM */
-  uint8 *prg_ram;     /* 512K PRG-RAM */
-  uint8 *word_ram[2]; /* 2 x 128K Word RAM (1M mode) */
-  uint8 *word_ram_2M; /* 256K Word RAM (2M mode) */
-  uint8 *bram;         /* 8K Backup RAM */
+  uint8 bootrom[0x20000];     /* 128K internal BOOT ROM */
+  uint8 prg_ram[0x80000];     /* 512K PRG-RAM */
+  uint8 word_ram[2][0x20000]; /* 2 x 128K Word RAM (1M mode) */
+  uint8 word_ram_2M[0x40000]; /* 256K Word RAM (2M mode) */
+  uint8 bram[0x2000];         /* 8K Backup RAM */
   reg16_t regs[0x100];        /* 256 x 16-bit ASIC registers */
-  uint32 cycles;              /* Master clock counter */
+  uint32 cycles;              /* CD Master clock counter */
+  uint32 cycles_per_line;     /* CD Master clock count per scanline */
   int32 stopwatch;            /* Stopwatch counter */
   int32 timer;                /* Timer counter */
   uint8 pending;              /* Pending interrupts */
   uint8 dmna;                 /* Pending DMNA write status */
+  uint8 type;                 /* CD hardware model */
   gfx_t gfx_hw;               /* Graphics processor */
   cdc_t cdc_hw;               /* CD data controller */
   cdd_t cdd_hw;               /* CD drive processor */
@@ -82,7 +94,9 @@ extern void scd_init(void);
 extern void scd_reset(int hard);
 extern void scd_update(unsigned int cycles);
 extern void scd_end_frame(unsigned int cycles);
+extern int scd_context_load(uint8 *state, char *version);
+extern int scd_context_save(uint8 *state);
 extern int scd_68k_irq_ack(int level);
-extern void prg_ram_dma_w(unsigned int words);
+extern void prg_ram_dma_w(unsigned int length);
 
 #endif
