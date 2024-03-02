@@ -24,7 +24,9 @@
 #include "sound.h"
 #include "sn76489.h"
 #include "ym2413.h"
+#ifdef HAVE_YM2612_CORE
 #include "ym2612.h"
+#endif
 #include "sram.h"
 #include "ggenie.h"
 #include "areplay.h"
