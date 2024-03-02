@@ -38,7 +38,7 @@
 
 #include "shared.h"
 
-struct
+static struct
 {
   uint8 axis;
   uint8 busy;
