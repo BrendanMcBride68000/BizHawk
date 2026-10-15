@@ -720,6 +720,10 @@ struct InitSettings
 	uint8_t LoadBios;
 	uint8_t Overscan;
 	uint8_t GGExtra;
+	uint16_t FMVolume;
+	uint16_t PSGVolume;
+	uint16_t PCMVolume;
+	uint16_t CDDAVolume;
 };
 
 
@@ -841,10 +845,10 @@ GPGX_EX int gpgx_init(const char* feromextension,
 #endif
 
 	/* sound options */
-	config.psg_preamp            = 150;
-	config.fm_preamp             = 100;
-	config.cdda_volume           = 100;
-	config.pcm_volume            = 100;
+	config.psg_preamp            = settings->PSGVolume; //150;
+	config.fm_preamp             = settings->FMVolume; //100;
+	config.cdda_volume           = settings->CDDAVolume; //100;
+	config.pcm_volume            = settings->PCMVolume; //100;
 	config.hq_fm                 = 1;
 	config.hq_psg                = 1;
 	config.filter                = settings->Filter; //0; /* no filter */
