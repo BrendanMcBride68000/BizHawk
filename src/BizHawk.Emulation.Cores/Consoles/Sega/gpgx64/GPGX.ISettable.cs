@@ -272,6 +272,26 @@ namespace BizHawk.Emulation.Cores.Consoles.Sega.gpgx
 			[Description("Sets the method used to emulate the FM synthesizer (main sound generator) of the Mega Drive/Genesis.  'MAME' options are fast, and run full speed on most systems.  'Nuked' options are cycle accurate, very high quality, and have substantial CPU requirements.  The 'YM2612' chip is used by the original Model 1 Mega Drive/Genesis.  The 'YM3438' is used in later Mega Drive/Genesis revisions.")]
 			[DefaultValue(LibGPGX.InitSettings.GenesisFMSoundChipType.MAME_YM2612)]
 			public LibGPGX.InitSettings.GenesisFMSoundChipType GenesisFMSoundChip { get; set; }
+			
+			[DisplayName("FM Volume")]
+			[Description("Sets the volume of the Genesis/Mega Drive FM sound generator. 100% is the default level.")]
+			[DefaultValue(100)]
+			public ushort FMVolume { get; set; }
+
+			[DisplayName("PSG Volume")]
+			[Description("Sets the volume of the Genesis/Mega Drive PSG sound generator. 150% is the default level.")]
+			[DefaultValue(150)]
+			public ushort PSGVolume { get; set; }
+
+			[DisplayName("PCM Volume")]
+			[Description("Sets the volume of the Sega CD/Mega-CD RF5C164 PCM sound generator. 100% is the default level.")]
+			[DefaultValue(100)]
+			public ushort PCMVolume { get; set; }
+
+			[DisplayName("CDDA Volume")]
+			[Description("Sets the volume of Sega CD/Mega-CD CD audio playback. 100% is the default level.")]
+			[DefaultValue(100)]
+			public ushort CDDAVolume { get; set; }
 
 			[DisplayName("Audio Filter")]
 			[DefaultValue(LibGPGX.InitSettings.FilterType.LowPass)]
@@ -329,6 +349,10 @@ namespace BizHawk.Emulation.Cores.Consoles.Sega.gpgx
 					LowGain = (short)(LowGain * 100),
 					MidGain = (short)(MidGain * 100),
 					HighGain = (short)(HighGain * 100),
+					FMVolume = FMVolume,
+					PSGVolume = PSGVolume,
+					PCMVolume = PCMVolume,
+					CDDAVolume = CDDAVolume,
 					BackdropColor = BackdropColor,
 					SixButton = UseSixButton,
 					InputSystemA = SystemForSystem(ControlTypeLeft),
