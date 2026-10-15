@@ -49,6 +49,10 @@ namespace BizHawk.Emulation.Cores.Consoles.Sega.gpgx
 			public short LowGain;
 			public short MidGain;
 			public short HighGain;
+			public ushort FMVolume;
+			public ushort PSGVolume;
+			public ushort PCMVolume;
+			public ushort CDDAVolume;
 
 			public enum FilterType : byte
 			{
